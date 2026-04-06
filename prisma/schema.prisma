@@ -4,12 +4,22 @@ generator client {
 
 datasource db {
   provider = "mysql"
+  url      = env("DATABASE_URL")
 }
 
 model Campaign {
-  id        String   @id @default(uuid())
-  name      String
-  status    String   @default("draft")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                 String   @id
+  name               String
+  status             String   @default("draft")
+
+  customerList       Json   // phones stored here
+  startTime          String
+  endTime            String
+  maxConcurrentCalls Int
+  maxDailyMinutes    Int
+  maxRetries         Int
+  retryDelayMs       Int
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
