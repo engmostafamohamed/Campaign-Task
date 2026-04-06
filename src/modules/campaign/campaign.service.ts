@@ -1,138 +1,63 @@
 import { CampaignEngine } from './campaign.engine';
 import { SystemClock } from '../../core/clock/system.clock';
-
-type ServiceResult<T = any> = {
-  success: boolean;
-  message: string;
-  data?: T;
-};
+import { CreateCampaignDtoType } from './campaign.dto';
+import { CampaignConfig } from './campaign.types';
 
 export class CampaignService {
+  [x: string]: any;
   private campaigns = new Map<string, CampaignEngine>();
 
-  async createCampaign(id: string, config: any): Promise<ServiceResult> {
-    try {
-      const engine = new CampaignEngine(
-        config,
-        this.mockCallHandler,
-        new SystemClock()
-      );
+  async createCampaign(id: string, dto: CreateCampaignDtoType){
+    const config = this.mapToConfig(dto);
+    const engine = new CampaignEngine(
+      config,
+      this.mockCallHandler,
+      new SystemClock()
+    );
 
-      this.campaigns.set(id, engine);
-
-      return {
-        success: true,
-        message: "Campaign created successfully",
-        data: { id }
-      };
-    } catch (error: any) {
-      return {
-        success: false,
-        message: error.message || "Failed to create campaign"
-      };
-    }
+    this.campaigns.set(id, engine);
+    return { id };
+    
   }
 
-  async startCampaign(id: string): Promise<ServiceResult> {
-    try {
-      const campaign = this.campaigns.get(id);
-
-      if (!campaign) {
-        return {
-          success: false,
-          message: "Campaign not found"
-        };
-      }
-
-      campaign.start();
-
-      return {
-        success: true,
-        message: "Campaign started successfully"
-      };
-    } catch (error: any) {
-      return {
-        success: false,
-        message: error.message || "Failed to start campaign"
-      };
+  async startCampaign(id: string){
+    const campaign = this.campaigns.get(id);
+    if (!campaign) {
+      throw new Error("Campaign not found");
     }
+
+    campaign.start();
+
+    return { message: "Campaign started successfully" };
+
   }
 
-  async pauseCampaign(id: string): Promise<ServiceResult> {
-    try {
-      const campaign = this.campaigns.get(id);
+  async pauseCampaign(id: string){
+    const campaign = this.campaigns.get(id);
+    if (!campaign) throw new Error("Campaign not found");
 
-      if (!campaign) {
-        return {
-          success: false,
-          message: "Campaign not found"
-        };
-      }
+    campaign.pause();
+    return {message: "Campaign paused successfully"};
 
-      campaign.pause();
-
-      return {
-        success: true,
-        message: "Campaign paused successfully"
-      };
-    } catch (error: any) {
-      return {
-        success: false,
-        message: error.message || "Failed to pause campaign"
-      };
-    }
+    
   }
 
-  async resumeCampaign(id: string): Promise<ServiceResult> {
-    try {
-      const campaign = this.campaigns.get(id);
+  async resumeCampaign(id: string){
+    const campaign = this.campaigns.get(id);
+    if (!campaign) throw new Error("Campaign not found");
 
-      if (!campaign) {
-        return {
-          success: false,
-          message: "Campaign not found"
-        };
-      }
-
-      campaign.resume();
-
-      return {
-        success: true,
-        message: "Campaign resumed successfully"
-      };
-    } catch (error: any) {
-      return {
-        success: false,
-        message: error.message || "Failed to resume campaign"
-      };
-    }
+    campaign.resume();
+    return { message: "Campaign resumed successfully" };
   }
 
-  async getCampaign(id: string): Promise<ServiceResult> {
-    try {
-      const campaign = this.campaigns.get(id);
+  async getCampaign(id: string){
+    const campaign = this.campaigns.get(id);
+    if (!campaign) throw new Error("Campaign not found");
 
-      if (!campaign) {
-        return {
-          success: false,
-          message: "Campaign not found"
-        };
-      }
-
-      return {
-        success: true,
-        message: "Campaign fetched successfully",
-        data: campaign.getStatus()
-      };
-    } catch (error: any) {
-      return {
-        success: false,
-        message: error.message || "Failed to fetch campaign"
-      };
-    }
+    return  campaign.getStatus();
   }
 
-  private async mockCallHandler() {
+  private async mockCallHandler(phone: string) {
     return new Promise<{ success: boolean; duration: number }>((resolve) => {
       setTimeout(() => {
         resolve({
@@ -141,5 +66,20 @@ export class CampaignService {
         });
       }, 1000);
     });
+  }
+  private mapToConfig(dto: CreateCampaignDtoType): CampaignConfig {
+    return {
+      phones: dto.customerList,
+      maxConcurrentCalls: dto.maxConcurrentCalls,
+      maxRetries: dto.maxRetries,
+      retryDelay: dto.retryDelayMs,
+      maxDailyMinutes: dto.maxDailyMinutes,
+      startTime: this.parseHour(dto.startTime),
+      endTime: this.parseHour(dto.endTime),
+    };
+  }
+
+  private parseHour(time: string): number {
+    return parseInt(time.split(":")[0]);
   }
 }

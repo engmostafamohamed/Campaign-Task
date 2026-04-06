@@ -1,14 +1,17 @@
-// middleware/error.middleware.ts
-import { Response} from "express";
+import { Request, Response, NextFunction } from "express";
+import { ApiResponse } from "../core/response/api.response";
 
 export const errorHandler = (
   err: any,
+  req: Request,
   res: Response,
+  next: NextFunction
 ) => {
   console.error(err);
 
-  return res.status(err.statusCode || 500).json({
-    success: false,
-    message: err.message || "Internal Server Error",
-  });
+  return ApiResponse.error(
+    res,
+    err.message || "Internal Server Error",
+    err.statusCode || 500
+  );
 };

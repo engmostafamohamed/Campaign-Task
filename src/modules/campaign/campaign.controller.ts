@@ -10,40 +10,28 @@ export class CampaignController {
   static create = catchAsync(async (req: Request, res: Response) => {
     const id = Date.now().toString();
 
-    await service.createCampaign(id, req.body);
+    const result = await service.createCampaign(id, req.body);
 
-    return ApiResponse.success(res, "Campaign created successfully", id );
+    return ApiResponse.success(res, "Campaign created successfully", result );
   });
 
   static start = catchAsync(async (req: Request, res: Response) => {
-    const { id } = req.params as { id: string };
-
-    await service.startCampaign(id);
-
-    return ApiResponse.success(res, "Campaign started successfully", id);
+    const result=await service.startCampaign(req.params.id as string);
+    return ApiResponse.success(res, "Campaign started successfully", result.message);
   });
 
   static pause = catchAsync(async (req: Request, res: Response) => {
-    const { id } = req.params as { id: string };
-
-    await service.pauseCampaign(id);
-
-    return ApiResponse.success(res, "Campaign paused successfully", id);
+    const result =await service.pauseCampaign(req.params.id as string);
+    return ApiResponse.success(res, "Campaign paused successfully", result.message);
   });
 
   static resume = catchAsync(async (req: Request, res: Response) => {
-    const { id } = req.params as { id: string };
-
-    await service.resumeCampaign(id);
-
-    return ApiResponse.success(res, "Campaign resumed successfully", id);
+    const result = await service.resumeCampaign(req.params.id as string);
+    return ApiResponse.success(res, "Campaign resumed successfully", result.message);
   });
 
   static get = catchAsync(async (req: Request, res: Response) => {
-    const { id } = req.params as { id: string };
-
-    const data = await service.getCampaign(id);
-
+    const data = await service.getCampaign(req.params.id as string);
     return ApiResponse.success(res, "Campaign fetched successfully", data);
   });
 }

@@ -3,7 +3,7 @@
     "module": "node16",
     "moduleResolution": "node16",
     "target": "ES2021",
-    "rootDir": "./src",
+    "rootDir": ".",
     "outDir": "./dist",
     "types": ["node"],
     "esModuleInterop": true,
@@ -15,5 +15,7 @@
     "strictNullChecks": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
-  }
+  },
+  "include": ["src/**/*", "prisma/**/*"],
+  "exclude": ["node_modules", "dist"]
 }

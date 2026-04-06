@@ -1,168 +1,163 @@
-import { DateTime } from "luxon";
+import {
+  CampaignConfig,
+  CallHandler,
+  RetryItem,
+  IClock,
+  ICampaign,
+} from "./campaign.types";
 
-type RetryItem = {
-  phone: string;
-  attempts: number;
-  nextRetryTime: number;
-};
+class CampaignState {
+  pendingQueue: string[] = [];
+  retryQueue: RetryItem[] = [];
+  activeCalls = 0;
+  completed = new Set<string>();
+  failed = new Set<string>();
+  dailyMinutes = 0;
+}
 
-export class CampaignEngine {
-  private pendingQueue: string[];
-  private retryQueue: RetryItem[] = [];
-
-  private activeCalls = 0;
-  private paused = false;
-  private status: 'idle' | 'running' | 'paused' | 'completed' = 'idle';
-
-  private dailyMinutes = 0;
+export class CampaignEngine implements ICampaign {
+  private state = new CampaignState();
+  private isPaused = false;
 
   constructor(
-    private config: any,
-    private callHandler: (phone: string) => Promise<{ success: boolean; duration: number }>,
-    private clock: any
+    private config: CampaignConfig,
+    private callHandler: CallHandler,
+    private clock: IClock
   ) {
-    this.pendingQueue = [...config.customerList];
-
-    // start daily reset
-    this.scheduleDailyReset();
+    this.state.pendingQueue = [...config.phones];
   }
 
-  // start campaign
   start() {
-    if (this.status === 'running') return;
-
-    this.status = 'running';
-    this.processQueue();
+    this.scheduleNext();
   }
 
   pause() {
-    this.paused = true;
-    this.status = 'paused';
+    this.isPaused = true;
   }
 
   resume() {
-    this.paused = false;
-    this.status = 'running';
-    this.processQueue();
+    this.isPaused = false;
+    this.scheduleNext();
   }
 
-  // main loop
-  private processQueue() {
-    if (this.paused || this.status !== 'running') return;
+  private scheduleNext() {
+    if (this.isPaused) return;
 
-    while (this.canStartCall()) {
-      const next = this.getNextCall();
-      if (!next) break;
+    const now = this.clock.now();
 
-      this.startCall(next);
+    if (!this.isWithinWorkingHours(now)) {
+      const next = this.getNextWorkingTime(now);
+      this.clock.setTimeout(() => this.scheduleNext(), next - now.getTime());
+      return;
+    }
+
+    if (this.state.dailyMinutes >= this.config.maxDailyMinutes) {
+      const nextDay = this.getNextDayStart(now);
+      this.state.dailyMinutes = 0;
+
+      this.clock.setTimeout(() => this.scheduleNext(), nextDay - now.getTime());
+      return;
+    }
+
+    while (
+      this.state.activeCalls < this.config.maxConcurrentCalls &&
+      this.hasWork()
+    ) {
+      const task = this.getNextTask();
+      if (!task) break;
+
+      this.executeCall(task);
     }
   }
 
-  // check conditions
-  private canStartCall(): boolean {
+  private getNextTask(): RetryItem | null {
+    const now = this.clock.now().getTime();
+
+    const retryIndex = this.state.retryQueue.findIndex(
+      (r) => r.nextRetryTime <= now
+    );
+
+    if (retryIndex !== -1) {
+      return this.state.retryQueue.splice(retryIndex, 1)[0];
+    }
+
+    const phone = this.state.pendingQueue.shift();
+    if (!phone) return null;
+
+    return { phone, attempts: 0, nextRetryTime: 0 };
+  }
+
+  private async executeCall(task: RetryItem) {
+    this.state.activeCalls++;
+
+    try {
+      const result = await this.callHandler(task.phone);
+
+      this.state.dailyMinutes += result.duration;
+
+      if (result.success) {
+        this.state.completed.add(task.phone);
+      } else {
+        this.handleRetry(task);
+      }
+    } catch {
+      this.handleRetry(task);
+    } finally {
+      this.state.activeCalls--;
+      this.scheduleNext();
+    }
+  }
+
+  private handleRetry(task: RetryItem) {
+    if (task.attempts >= this.config.maxRetries) {
+      this.state.failed.add(task.phone);
+      return;
+    }
+
+    task.attempts++;
+    task.nextRetryTime =
+      this.clock.now().getTime() + this.config.retryDelay;
+
+    this.state.retryQueue.push(task);
+  }
+
+  private isWithinWorkingHours(now: Date) {
+    const h = now.getHours();
+    return h >= this.config.startTime && h < this.config.endTime;
+  }
+
+  private getNextWorkingTime(now: Date) {
+    const next = new Date(now);
+    next.setHours(this.config.startTime, 0, 0, 0);
+
+    if (now.getHours() >= this.config.endTime) {
+      next.setDate(next.getDate() + 1);
+    }
+
+    return next.getTime();
+  }
+
+  private getNextDayStart(now: Date) {
+    const next = new Date(now);
+    next.setDate(next.getDate() + 1);
+    next.setHours(this.config.startTime, 0, 0, 0);
+    return next.getTime();
+  }
+
+  private hasWork() {
     return (
-      !this.paused &&
-      this.activeCalls < this.config.maxConcurrentCalls &&
-      this.isWithinWorkingHours() &&
-      this.dailyMinutes < this.config.maxDailyMinutes
+      this.state.pendingQueue.length > 0 ||
+      this.state.retryQueue.length > 0
     );
   }
 
-  // working hours (timezone aware)
-  private isWithinWorkingHours(): boolean {
-    const zone = this.config.timezone || "UTC";
-
-    const now = DateTime.fromMillis(this.clock.now(), { zone });
-
-    const [sh, sm] = this.config.startTime.split(":").map(Number);
-    const [eh, em] = this.config.endTime.split(":").map(Number);
-
-    const start = now.set({ hour: sh, minute: sm, second: 0 });
-    const end = now.set({ hour: eh, minute: em, second: 0 });
-
-    return now >= start && now <= end;
-  }
-
-  // pick next call
-  private getNextCall(): string | null {
-    const now = this.clock.now();
-
-    // retry has priority
-    const retry = this.retryQueue.find(r => r.nextRetryTime <= now);
-
-    if (retry) {
-      this.retryQueue = this.retryQueue.filter(r => r !== retry);
-      return retry.phone;
-    }
-
-    return this.pendingQueue.shift() || null;
-  }
-
-  // simulate call
-  private startCall(phone: string) {
-    this.activeCalls++;
-
-    this.callHandler(phone).then((res) => {
-      this.activeCalls--;
-
-      this.dailyMinutes += res.duration;
-
-      if (!res.success) {
-        this.handleRetry(phone);
-      }
-
-      this.checkCompletion();
-      this.processQueue();
-    });
-  }
-
-  // retry logic
-  private handleRetry(phone: string) {
-    const existing = this.retryQueue.find(r => r.phone === phone);
-    const attempts = existing ? existing.attempts + 1 : 1;
-
-    if (attempts > this.config.maxRetries) return;
-
-    this.retryQueue.push({
-      phone,
-      attempts,
-      nextRetryTime: this.clock.now() + this.config.retryDelayMs,
-    });
-  }
-
-  // reset daily minutes
-  private scheduleDailyReset() {
-    const now = new Date(this.clock.now());
-    const nextMidnight = new Date(now);
-    nextMidnight.setHours(24, 0, 0, 0);
-
-    const delay = nextMidnight.getTime() - now.getTime();
-
-    this.clock.setTimeout(() => {
-      this.dailyMinutes = 0;
-      this.scheduleDailyReset();
-    }, delay);
-  }
-
-  // completion check
-  private checkCompletion() {
-    if (
-      this.pendingQueue.length === 0 &&
-      this.retryQueue.length === 0 &&
-      this.activeCalls === 0
-    ) {
-      this.status = "completed";
-    }
-  }
-
-  // optional status getter
   getStatus() {
     return {
-      status: this.status,
-      pending: this.pendingQueue.length,
-      retries: this.retryQueue.length,
-      activeCalls: this.activeCalls,
-      dailyMinutes: this.dailyMinutes,
+      pending: this.state.pendingQueue.length,
+      retry: this.state.retryQueue.length,
+      active: this.state.activeCalls,
+      completed: this.state.completed.size,
+      failed: this.state.failed.size,
     };
   }
 }
