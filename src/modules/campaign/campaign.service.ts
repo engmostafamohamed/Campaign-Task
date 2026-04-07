@@ -2,13 +2,28 @@ import { CampaignEngine } from './campaign.engine';
 import { SystemClock } from '../../core/clock/system.clock';
 import { CreateCampaignDtoType } from './campaign.dto';
 import { CampaignConfig } from './campaign.types';
-
+import { PrismaClient } from '@prisma/client';
+const prisma = new PrismaClient();
 export class CampaignService {
   [x: string]: any;
   private campaigns = new Map<string, CampaignEngine>();
 
   async createCampaign(id: string, dto: CreateCampaignDtoType){
     const config = this.mapToConfig(dto);
+    await prisma.campaign.create({
+      data: {
+        id,
+        name: "Campaign " + id,
+        status: "draft",
+        customerList: dto.customerList,
+        startTime: dto.startTime,
+        endTime: dto.endTime,
+        maxConcurrentCalls: dto.maxConcurrentCalls,
+        maxDailyMinutes: dto.maxDailyMinutes,
+        maxRetries: dto.maxRetries,
+        retryDelayMs: dto.retryDelayMs,
+      }
+    });
     const engine = new CampaignEngine(
       config,
       this.mockCallHandler,
@@ -27,6 +42,10 @@ export class CampaignService {
     }
 
     campaign.start();
+    await prisma.campaign.update({
+      where: { id },
+      data: { status: "running" }
+    });
 
     return { message: "Campaign started successfully" };
 
@@ -37,6 +56,10 @@ export class CampaignService {
     if (!campaign) throw new Error("Campaign not found");
 
     campaign.pause();
+    await prisma.campaign.update({
+      where: { id },
+      data: { status: "paused" }
+    });
     return {message: "Campaign paused successfully"};
 
     
@@ -47,6 +70,10 @@ export class CampaignService {
     if (!campaign) throw new Error("Campaign not found");
 
     campaign.resume();
+    await prisma.campaign.update({
+      where: { id },
+      data: { status: "running" }
+    });
     return { message: "Campaign resumed successfully" };
   }
 
@@ -54,7 +81,10 @@ export class CampaignService {
     const campaign = this.campaigns.get(id);
     if (!campaign) throw new Error("Campaign not found");
 
-    return  campaign.getStatus();
+    return  {
+      id,
+      status: campaign.getStatus(),
+    };
   }
 
   private async mockCallHandler(phone: string) {
@@ -67,6 +97,7 @@ export class CampaignService {
       }, 1000);
     });
   }
+
   private mapToConfig(dto: CreateCampaignDtoType): CampaignConfig {
     return {
       phones: dto.customerList,

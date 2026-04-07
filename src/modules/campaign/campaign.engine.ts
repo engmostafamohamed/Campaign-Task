@@ -13,11 +13,14 @@ class CampaignState {
   completed = new Set<string>();
   failed = new Set<string>();
   dailyMinutes = 0;
+  lastDay: string = "";
 }
 
 export class CampaignEngine implements ICampaign {
   private state = new CampaignState();
   private isPaused = false;
+  private isRunning = false;
+  private isCompleted = false;
 
   constructor(
     private config: CampaignConfig,
@@ -28,7 +31,9 @@ export class CampaignEngine implements ICampaign {
   }
 
   start() {
-    this.scheduleNext();
+    if (this.isRunning) return;
+    this.isRunning = true;
+    this.tick();
   }
 
   pause() {
@@ -36,29 +41,26 @@ export class CampaignEngine implements ICampaign {
   }
 
   resume() {
+    if (!this.isPaused) return;
     this.isPaused = false;
-    this.scheduleNext();
+    this.tick();
   }
 
-  private scheduleNext() {
-    if (this.isPaused) return;
+  // 🔥 MAIN LOOP
+  private tick() {
+    if (this.isPaused || this.isCompleted) return;
 
     const now = this.clock.now();
 
+    this.resetDailyIfNeeded(now);
+
     if (!this.isWithinWorkingHours(now)) {
       const next = this.getNextWorkingTime(now);
-      this.clock.setTimeout(() => this.scheduleNext(), next - now.getTime());
+      this.clock.setTimeout(() => this.tick(), next - now.getTime());
       return;
     }
 
-    if (this.state.dailyMinutes >= this.config.maxDailyMinutes) {
-      const nextDay = this.getNextDayStart(now);
-      this.state.dailyMinutes = 0;
-
-      this.clock.setTimeout(() => this.scheduleNext(), nextDay - now.getTime());
-      return;
-    }
-
+    // 🔥 fill available slots
     while (
       this.state.activeCalls < this.config.maxConcurrentCalls &&
       this.hasWork()
@@ -66,19 +68,32 @@ export class CampaignEngine implements ICampaign {
       const task = this.getNextTask();
       if (!task) break;
 
+      // 🔥 daily cap check BEFORE starting
+      if (this.state.dailyMinutes >= this.config.maxDailyMinutes) {
+        const nextDay = this.getNextDayStart(now);
+        this.clock.setTimeout(() => this.tick(), nextDay - now.getTime());
+        return;
+      }
+
       this.executeCall(task);
     }
+
+    this.checkCompletion();
   }
 
   private getNextTask(): RetryItem | null {
     const now = this.clock.now().getTime();
 
-    const retryIndex = this.state.retryQueue.findIndex(
-      (r) => r.nextRetryTime <= now
+    // 🔥 retry priority
+    this.state.retryQueue.sort(
+      (a, b) => a.nextRetryTime - b.nextRetryTime
     );
 
-    if (retryIndex !== -1) {
-      return this.state.retryQueue.splice(retryIndex, 1)[0];
+    if (
+      this.state.retryQueue.length > 0 &&
+      this.state.retryQueue[0].nextRetryTime <= now
+    ) {
+      return this.state.retryQueue.shift()!;
     }
 
     const phone = this.state.pendingQueue.shift();
@@ -104,7 +119,7 @@ export class CampaignEngine implements ICampaign {
       this.handleRetry(task);
     } finally {
       this.state.activeCalls--;
-      this.scheduleNext();
+      this.tick(); // 🔥 continue scheduling
     }
   }
 
@@ -119,6 +134,15 @@ export class CampaignEngine implements ICampaign {
       this.clock.now().getTime() + this.config.retryDelay;
 
     this.state.retryQueue.push(task);
+  }
+
+  private resetDailyIfNeeded(now: Date) {
+    const day = now.toDateString();
+
+    if (this.state.lastDay !== day) {
+      this.state.dailyMinutes = 0;
+      this.state.lastDay = day;
+    }
   }
 
   private isWithinWorkingHours(now: Date) {
@@ -151,6 +175,12 @@ export class CampaignEngine implements ICampaign {
     );
   }
 
+  private checkCompletion() {
+    if (!this.hasWork() && this.state.activeCalls === 0) {
+      this.isCompleted = true;
+    }
+  }
+
   getStatus() {
     return {
       pending: this.state.pendingQueue.length,
@@ -158,6 +188,7 @@ export class CampaignEngine implements ICampaign {
       active: this.state.activeCalls,
       completed: this.state.completed.size,
       failed: this.state.failed.size,
+      isCompleted: this.isCompleted,
     };
   }
 }
