@@ -42,7 +42,7 @@ async function main() {
     skipDuplicates: true, // مهم عشان مايحصلش duplicate error
   });
 
-  console.log("✅ Seed data inserted successfully");
+  console.log("Seed data inserted successfully");
 }
 
 main()
@@ -50,7 +50,7 @@ main()
     await prisma.$disconnect();
   })
   .catch(async (e) => {
-    console.error("❌ Seeder error:", e);
+    console.error("Seeder error:", e);
     await prisma.$disconnect();
     process.exit(1);
   });
